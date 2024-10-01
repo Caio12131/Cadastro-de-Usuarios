@@ -1,5 +1,6 @@
 import tkinter as tk
 from tkinter import messagebox, simpledialog
+import sqlite3
 
 class CadastroApp:
     def __init__(self, root):
@@ -9,15 +10,16 @@ class CadastroApp:
         # Definindo o tamanho da janela
         self.root.geometry("400x400")  # Largura x Altura
 
+        # Conectando ao banco de dados SQLite
+        self.conn = sqlite3.connect("cadastro_usuarios.db")
+        self.create_table()
+
         # Adicionando um título com fundo púrpura
         self.title_frame = tk.Frame(root, bg="purple")
         self.title_frame.pack(fill=tk.X)
 
         self.title_label = tk.Label(self.title_frame, text="Cadastro de Usuários", bg="purple", fg="white", font=("Concert One", 16))
         self.title_label.pack(pady=10)
-
-        # Lista para armazenar os cadastros
-        self.cadastros = []
 
         # Criando um frame para os campos de entrada
         self.input_frame = tk.Frame(root)
@@ -69,9 +71,23 @@ class CadastroApp:
 
         # Botão para redefinir senha
         self.btn_redefinir_senha = tk.Button(root, text="Redefinir Senha", command=self.redefinir_senha, bg="purple", fg="white", font=("Concert One", 12), borderwidth=0, highlightthickness=0, relief="flat")
-        self.btn_redefinir_senha.pack(pady=1)
+        self.btn_redefinir_senha.pack(pady=5)
         self.btn_redefinir_senha.bind("<Enter>", self.on_enter)
         self.btn_redefinir_senha.bind("<Leave>", self.on_leave)
+
+    def create_table(self):
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS usuarios (
+                id INTEGER PRIMARY KEY,
+                nome TEXT NOT NULL,
+                cpf TEXT UNIQUE NOT NULL,
+                senha TEXT NOT NULL,
+                endereco TEXT,
+                telefone TEXT
+            )
+        ''')
+        self.conn.commit()
 
     def on_enter(self, event):
         event.widget['bg'] = 'darkviolet'  # Mudando a cor de fundo ao passar o mouse
@@ -87,16 +103,16 @@ class CadastroApp:
         telefone = self.entry_telefone.get().strip()
 
         if nome and cpf and senha and endereco and telefone:
-            # Verifica se o CPF já está cadastrado
-            for usuario in self.cadastros:
-                if usuario[1] == cpf:
-                    messagebox.showwarning("Erro", "CPF já cadastrado no sistema.")
-                    return
-
-            # Se tudo estiver ok, cadastra o usuário como uma lista
-            self.cadastros.append([nome, cpf, senha, endereco, telefone])  # Usando lista em vez de tupla
-            messagebox.showinfo("Sucesso", f"Usuário {nome} cadastrado com sucesso!")
-            self.limpar_campos()
+            try:
+                # Se tudo estiver ok, cadastra o usuário no banco de dados
+                cursor = self.conn.cursor()
+                cursor.execute('INSERT INTO usuarios (nome, cpf, senha, endereco, telefone) VALUES (?, ?, ?, ?, ?)',
+                               (nome, cpf, senha, endereco, telefone))
+                self.conn.commit()
+                messagebox.showinfo("Sucesso", f"Usuário {nome} cadastrado com sucesso!")
+                self.limpar_campos()
+            except sqlite3.IntegrityError:
+                messagebox.showwarning("Erro", "CPF já cadastrado no sistema.")
         else:
             messagebox.showwarning("Erro", "Todos os campos são obrigatórios!")
 
@@ -111,17 +127,19 @@ class CadastroApp:
     def pesquisar(self):
         nome_pesquisa = self.entry_pesquisa.get().strip()
         if nome_pesquisa:
-            for usuario in self.cadastros:
-                if usuario[0] == nome_pesquisa:
-                    self.solicitar_senha(usuario)
-                    return
-            messagebox.showwarning("Usuário não encontrado", "Usuário não encontrado.")
+            cursor = self.conn.cursor()
+            cursor.execute('SELECT * FROM usuarios WHERE nome = ?', (nome_pesquisa,))
+            usuario = cursor.fetchone()
+            if usuario:
+                self.solicitar_senha(usuario)
+            else:
+                messagebox.showwarning("Usuário não encontrado", "Usuário não encontrado.")
         else:
             messagebox.showwarning("Erro", "Por favor, insira um nome para pesquisa.")
 
     def solicitar_senha(self, usuario):
         senha_digitada = simpledialog.askstring("Senha", "Digite a senha:", show="*")  # Asterisco para ocultar
-        if senha_digitada == usuario[2]:  # Verifica se a senha está correta
+        if senha_digitada == usuario[3]:  # Verifica se a senha está correta
             self.exibir_informacoes(usuario)
         else:
             messagebox.showwarning("Erro", "Senha incorreta!")
@@ -131,33 +149,37 @@ class CadastroApp:
         info_window.title("Informações do Usuário")
 
         # Informações do usuário
-        tk.Label(info_window, text=f"Nome: {usuario[0]}", font=("Concert One", 12)).pack(pady=5)
-        tk.Label(info_window, text=f"CPF: {usuario[1]}", font=("Concert One", 12)).pack(pady=5)
-        tk.Label(info_window, text=f"Endereço: {usuario[3]}", font=("Concert One", 12)).pack(pady=5)
-        tk.Label(info_window, text=f"Telefone: {usuario[4]}", font=("Concert One", 12)).pack(pady=5)
-
-        # Botão para fechar a janela de informações
-        btn_fechar = tk.Button(info_window, text="Fechar", command=info_window.destroy, bg="purple", fg="white", font=("Concert One", 12), borderwidth=0, highlightthickness=0, relief="flat")
-        btn_fechar.pack(pady=10)
+        tk.Label(info_window, text=f"Nome: {usuario[1]}", font=("Concert One", 12)).pack(pady=5)
+        tk.Label(info_window, text=f"CPF: {usuario[2]}", font=("Concert One", 12)).pack(pady=5)
+        tk.Label(info_window, text=f"Endereço: {usuario[4]}", font=("Concert One", 12)).pack(pady=5)
+        tk.Label(info_window, text=f"Telefone: {usuario[5]}", font=("Concert One", 12)).pack(pady=5)
 
     def redefinir_senha(self):
-        nome_redefinir = simpledialog.askstring("Redefinir Senha", "Digite o nome do usuário:")
-        if nome_redefinir:
-            for usuario in self.cadastros:
-                if usuario[0] == nome_redefinir:
-                    # Solicita a senha antiga
-                    senha_antiga = simpledialog.askstring("Verificação", "Digite a senha antiga:", show="*")
-                    if senha_antiga == usuario[2]:  # Verifica a senha antiga
-                        nova_senha = simpledialog.askstring("Nova Senha", "Digite a nova senha:", show="*")
-                        if nova_senha:
-                            # Atualiza a senha no registro
-                            usuario[2] = nova_senha  # Agora que usuario é uma lista, isso funcionará
-                            messagebox.showinfo("Sucesso", "Senha redefinida com sucesso!")
-                        else:
-                            messagebox.showwarning("Erro", "Nova senha não pode ser vazia.")
+        nome_pesquisa = self.entry_pesquisa.get().strip()
+        if nome_pesquisa:
+            cursor = self.conn.cursor()
+            cursor.execute('SELECT * FROM usuarios WHERE nome = ?', (nome_pesquisa,))
+            usuario = cursor.fetchone()
+            if usuario:
+                senha_antiga = simpledialog.askstring("Senha Antiga", "Digite a senha antiga:", show="*")
+                if senha_antiga == usuario[3]:  # Verifica a senha antiga
+                    nova_senha = simpledialog.askstring("Nova Senha", "Digite a nova senha:", show="*")
+                    if nova_senha:
+                        # Atualiza a senha no registro
+                        cursor.execute('UPDATE usuarios SET senha = ? WHERE id = ?', (nova_senha, usuario[0]))
+                        self.conn.commit()
+                        messagebox.showinfo("Sucesso", "Senha redefinida com sucesso!")
                     else:
-                        messagebox.showwarning("Erro", "Senha antiga incorreta!")
-                    return
+                        messagebox.showwarning("Erro", "Nova senha não pode ser vazia.")
+                else:
+                    messagebox.showwarning("Erro", "Senha antiga incorreta!")
+            else:
+                messagebox.showwarning("Erro", "Usuário não encontrado.")
+        else:
+            messagebox.showwarning("Erro", "Por favor, insira um nome para redefinir a senha.")
+
+    def __del__(self):
+        self.conn.close()  # Fecha a conexão com o banco de dados ao finalizar
 
 if __name__ == "__main__":
     root = tk.Tk()
